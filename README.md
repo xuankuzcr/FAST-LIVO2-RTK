@@ -103,8 +103,26 @@ Download our collected rosbag files via OneDrive ([**FAST-LIVO2-Dataset**](https
 roslaunch fast_livo mapping_avia.launch
 rosbag play YOUR_DOWNLOADED.bag
 ```
+## 5. RTK Post-Processing Extension (New Feature)
+We have integrated a Factor Graph-based RTK Post-Processing module into the original FAST-LIVO2 pipeline. By fusing RTK GPS signals, it eliminates the accumulated drift over long trajectories and outputs globally consistent trajectories and point cloud maps.
 
+### 5.1 Additional Prerequisites
+GTSAM Used for factor graph-based post-processing optimization. To avoid Eigen version conflicts, we recommend the following installation flags:
+```bash
+git clone https://github.com/borglab/gtsam.git
+cd gtsam
+mkdir build && cd build
+cmake -DGTSAM_BUILD_WITH_MARCH_NATIVE=OFF -DGTSAM_USE_SYSTEM_EIGEN=ON ..
+make -j$(nproc)
+sudo make install
+```
+GeographicLib Used for converting geographic coordinates (Latitude/Longitude/Altitude) to local Cartesian coordinates.
+```bash
+sudo apt-get install libgeographic-dev
+```
+### 5.2 Run RTK Extension
+Download our newly provided RTK test rosbag file: ([**RTK-extention-Dataset**](https://drive.google.com/drive/folders/1fsUMNn0qgZ816zNcM7TCWYPf4QH1_1WO?usp=drive_link)). 
 
-## 5. License
+## 6. License
 
 The source code of this package is released under the [**GPLv2**](http://www.gnu.org/licenses/) license. For commercial use, please contact me at <zhengcr@connect.hku.hk> and Prof. Fu Zhang at <fuzhang@hku.hk> to discuss an alternative license.

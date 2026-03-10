@@ -42,8 +42,8 @@ vio:
 imu:
   imu_en: true
   imu_int_frame: 30
-  acc_cov: 0.5 # 0.2
-  gyr_cov: 0.3 #0.5
+  acc_cov: 2 # 0.2
+  gyr_cov: 0.1 #0.5
   b_acc_cov: 0.0001 # 0.1
   b_gyr_cov: 0.0001 # 0.1
   ba_bg_est_en: true
