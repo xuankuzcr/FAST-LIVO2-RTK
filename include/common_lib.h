@@ -251,24 +251,4 @@ auto set_pose6d(const double t, const Matrix<T, 3, 1> &a, const Matrix<T, 3, 1> 
   return move(rot_kp);
 }
 
-#include <iostream>
-#include <string>
-#include <pcl/point_cloud.h>
-#include <pcl/point_types.h>
-
-class common_lib
-{
-  public:
-    template<typename T> 
-    float pointDistance(const T& p)
-    { 
-      return sqrt(p.x * p.x + p.y * p.y + p.z * p.z);
-    }
-
-    template<typename T>
-    float pointDistance(const T& p1, const T& p2)
-    {
-      return sqrt((p1.x - p2.x) * (p1.x - p2.x) + (p1.y - p2.y) * (p1.y - p2.y) + (p1.z - p2.z) * (p1.z - p2.z));
-    }
-};
 #endif

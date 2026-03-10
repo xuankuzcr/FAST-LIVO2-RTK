@@ -3,10 +3,11 @@
 
 	<arg name="rviz" default="true" />
 
-	<rosparam command="load" file="$(find fast_livo)/config/MARS_LVIG.yaml" />
+	<rosparam command="load" file="$(find fast_livo)/config/AGV-LVGO.yaml" />
 
 	<node pkg="fast_livo" type="fastlivo_mapping" name="laserMapping" output="screen">
-		<rosparam file="$(find fast_livo)/config/camera_MARS_LVIG.yaml" />
+		<rosparam file="$(find fast_livo)/config/camera.yaml" />
+		<param name="outputfilepath" value="$(find fast_livo)/output" />
 	
 	</node>
 	

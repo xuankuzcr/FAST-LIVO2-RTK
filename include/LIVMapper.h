@@ -200,13 +200,13 @@ public:
   vector<double> T_I_R;
 
   int pcd_file_index = 0;
-  bool save_data = false;
-  std::string save_directory = "/home/nomai/ws_fastlivo2_rtk/src/FAST-LIVO2/DATA/";
-  std::string pcd_save_file = save_directory + "pcd/";
-  std::string rtk_save_file = save_directory + "rtk.txt";
-  std::string imu_save_file = save_directory + "imu.txt";
-  std::string odom_save_file = save_directory + "odom.txt"; 
-  std::string cov_save_file  = save_directory + "cov.txt"; 
+  bool debug_mode = false;
+  std::string save_directory;
+  std::string pcd_save_file;
+  std::string rtk_save_file;
+  std::string imu_save_file;
+  std::string odom_save_file; 
+  std::string cov_save_file; 
   
   double keyframe_time = 0.0;
 

@@ -109,11 +109,17 @@ void LIVMapper::readParameters(ros::NodeHandle &nh)
   nh.param<bool>("publish/pub_effect_point_en", pub_effect_point_en, false);
   nh.param<bool>("publish/dense_map_en", dense_map_en, false);
 
-  nh.param<bool>("common/save_data", save_data, false);
+  nh.param<bool>("gps/debug_mode", debug_mode, false);
   p_pre->blind_sqr = p_pre->blind * p_pre->blind;
 
   //nh.param<bool>("gps/gps_en", rtk_en, false);
   nh.param<vector<double>>("gps/extrinsic_T", T_I_R, vector<double>());
+  nh.param<std::string>("laserMapping/outputfilepath", save_directory, "");
+  pcd_save_file = save_directory + "/debug/pcd/";
+  rtk_save_file = save_directory + "/debug/rtk.txt";
+  imu_save_file = save_directory + "/debug/imu.txt";
+  odom_save_file = save_directory + "/debug/odom.txt"; 
+  cov_save_file  = save_directory + "/debug/cov.txt"; 
 }
 
 void LIVMapper::initializeComponents() 
@@ -909,7 +915,7 @@ void LIVMapper::rtk_cbk(const gnss_comm::GnssPVTSolnMsg::ConstPtr& gpsMsg)
 
     pub_rtk.publish(gps_odom);
     
-    if(save_data)
+    if(debug_mode)
     {
       std::ofstream gps_file(rtk_save_file, std::ios::app); 
       if (gps_file.is_open()) {
@@ -1045,7 +1051,7 @@ void LIVMapper::imu_cbk(const sensor_msgs::Imu::ConstPtr &msg_in)
       first_imu_save = false;
   }
 
-  if(save_data)
+  if(debug_mode)
   {
     std::ofstream imu_file(imu_save_file, std::ios::app);
     if (imu_file.is_open()) {
@@ -1517,7 +1523,7 @@ void LIVMapper::publish_frame_world(const ros::Publisher &pubLaserCloudFullRes, 
     laserCloudbodymsg.header.frame_id = "camera_init";
     pub_lidarRGB.publish(laserCloudbodymsg);
 
-    if(save_data)
+    if(debug_mode)
     {
       if (laserCloudBodyRGB->size() > 0) 
       {
@@ -1550,7 +1556,7 @@ void LIVMapper::publish_frame_world(const ros::Publisher &pubLaserCloudFullRes, 
       laserCloudbodymsg.header.frame_id = "camera_init";
       pub_lidarRGB.publish(laserCloudbodymsg);
 
-      if(save_data)
+      if(debug_mode)
       {
         if (laserCloudBody->size() > 0) 
         {
@@ -1591,7 +1597,7 @@ void LIVMapper::publish_frame_world(const ros::Publisher &pubLaserCloudFullRes, 
   pose_cov_map.block<3, 3>(3, 0) = _state.cov.block<3, 3>(0, 3);
   pub_odom.publish(odom_msg_ekf); 
 
-  if(save_data)
+  if(debug_mode)
   {
     std::ofstream odom_file(odom_save_file, std::ios::app); 
     if (odom_file.is_open()) {

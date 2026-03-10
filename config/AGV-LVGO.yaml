@@ -7,18 +7,18 @@ common:
   ros_driver_bug_fix: false
 
 extrin_calib:
-  Rcl: [0.02264, -0.99956, -0.01923, -0.00034, 0.01922, -0.99982, 0.99974, 0.02264, 0.00009]
-  Pcl: [-0.05690, 0.01103, 0.01350]
-
-  extrinsic_T: [-8.086759e-01, 3.195559e-01, -7.997231e-01]
-  extrinsic_R: [9.999976e-01, 7.553071e-04, -2.035826e-03, 
-                  -7.854027e-04, 9.998898e-01, -1.482298e-02, 
-                  2.024406e-03, 1.482454e-02, 9.998881e-01]
-
+  extrinsic_T: [0.04165, 0.02326, -0.0284]
+  extrinsic_R: [1, 0, 0, 0, 1, 0, 0, 0, 1]
+  # LidarToCamera 
+  Rcl: [ -0.002328, -0.999997,  0.000477,
+        -0.015224, -0.000441, -0.999884,
+        0.999881, -0.002335, -0.015223]
+  Pcl: [ -0.089164,  0.069986, -0.016360]
+  
 time_offset: 
   imu_time_offset: 0.0
-  img_time_offset: -0.1
-  exposure_time_init: 0.0132
+  img_time_offset: 0.1
+  exposure_time_init: 0.0
 
 preprocess:
   point_filter_num: 1
@@ -43,16 +43,17 @@ imu:
   imu_en: true
   imu_int_frame: 30
   acc_cov: 0.5 # 0.2
-  gyr_cov: 0.3 # 0.5
+  gyr_cov: 0.3 #0.5
   b_acc_cov: 0.0001 # 0.1
   b_gyr_cov: 0.0001 # 0.1
+  ba_bg_est_en: true
 
 lio:
   max_iterations: 5
   dept_err: 0.02
   beam_err: 0.05
   min_eigen_value: 0.0025 # 0.005
-  voxel_size: 0.5
+  voxel_size: 2
   max_layer: 2
   max_points_num: 50
   layer_init_num: [5, 5, 5, 5, 5]
@@ -74,8 +75,8 @@ publish:
   blind_rgb_points: 0.0
 
 evo:
-  seq_name: "CBD_Building_01"
-  pose_output_en: false
+  seq_name: "Grass01"
+  pose_output_en: true
 
 pcd_save:
   pcd_save_en: false
@@ -86,11 +87,14 @@ pcd_save:
   # -1 : all frames will be saved in ONE pcd file, may lead to memory crash when having too much frames.
 
 gps:
-  gps_offset: -0.5
-  gps_en: false
-  gps_topic: "/gps/fix"
+  gps_en: true
+  debug_mode: false
   gps_time_offset: 0.0
-  gpsCovThreshold: 2.0
-  poseCovThreshold: 25.0
-  surroundingkeyframeAddingDistThreshold: 1.0
-  surroundingkeyframeAddingAngleThreshold: 0.2
+  extrinsic_T: [0, 0, 0]
+  gps_topic: "/ublox_driver/receiver_pvt"
+
+opt:
+  load_data: false
+  rtk_cov: 0.1
+  livo2_RPY_cov: 0.00000001
+  livo2_XYZ_cov: 0.0001
