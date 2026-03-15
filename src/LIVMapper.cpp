@@ -11,7 +11,8 @@ which is included as part of this source code package.
 */
 
 #include "LIVMapper.h"
-
+#include <gnss_comm/GnssPVTSolnMsg.h>     
+#include <GeographicLib/LocalCartesian.hpp>
 LIVMapper::LIVMapper(ros::NodeHandle &nh)
     : extT(0, 0, 0),
       extR(M3D::Identity())

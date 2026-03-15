@@ -20,7 +20,9 @@ which is included as part of this source code package.
 #include <image_transport/image_transport.h>
 #include <nav_msgs/Path.h>
 #include <vikit/camera_loader.h>
-#include "rtk_ekf.h"
+#include <gnss_comm/GnssPVTSolnMsg.h>     
+#include <GeographicLib/LocalCartesian.hpp>
+
 class LIVMapper
 {
 public:

@@ -103,11 +103,11 @@ Download our collected rosbag files via OneDrive ([**FAST-LIVO2-Dataset**](https
 roslaunch fast_livo mapping_avia.launch
 rosbag play YOUR_DOWNLOADED.bag
 ```
-## 5. RTK Post-Processing Extension (New Feature)
+## 5. RTK Post-Processing Extension 
 We have integrated a Factor Graph-based RTK Post-Processing module into the original FAST-LIVO2 pipeline. By fusing RTK GPS signals, it eliminates the accumulated drift over long trajectories and outputs globally consistent trajectories and point cloud maps.
 
 ### 5.1 Additional Prerequisites
-GTSAM Used for factor graph-based post-processing optimization. To avoid Eigen version conflicts, we recommend the following installation flags:
+GTSAM Used for factor graph-based post-processing optimization. 
 ```bash
 git clone https://github.com/borglab/gtsam.git
 cd gtsam
@@ -116,12 +116,31 @@ cmake -DGTSAM_BUILD_WITH_MARCH_NATIVE=OFF -DGTSAM_USE_SYSTEM_EIGEN=ON ..
 make -j$(nproc)
 sudo make install
 ```
-GeographicLib Used for converting geographic coordinates (Latitude/Longitude/Altitude) to local Cartesian coordinates.
+GeographicLib Used for converting geographic coordinates to local Cartesian coordinates.
 ```bash
 sudo apt-get install libgeographic-dev
 ```
 ### 5.2 Run RTK Extension
 Download our newly provided RTK test rosbag file: ([**RTK-extention-Dataset**](https://drive.google.com/drive/folders/1fsUMNn0qgZ816zNcM7TCWYPf4QH1_1WO?usp=drive_link)). 
+
+### 5.3 Usage
+
+1. Launch the system and load the UAV/AGV configuration file:
+```bash
+roslaunch fast_livo AGV.launch
+```
+
+2. Play your rosbag. Once the sequence is finished, **press `Enter`** in the terminal running the launch file to trigger the backend optimizer.
+
+```bash
+rosbag play AGV-LVGO-01-s55.bag -s 55 --duration 110
+```
+
+3. Compare the generated global point cloud maps before and after optimization using `pcl_viewer`:
+```bash
+pcl_viewer -multiview 1 src/FAST-LIVO2/output/global_pcd/after_optimization.pcd src/FAST-LIVO2/output/global_pcd/before_optimization.pcd
+```
+*(Note: Ensure you are in the correct directory or provide the absolute path to `after_optimization.pcd` if it differs from the workspace root).*
 
 ## 6. License
 

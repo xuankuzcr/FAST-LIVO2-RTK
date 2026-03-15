@@ -259,32 +259,32 @@ double optimization::calculateDtwTimeOffset(
 void optimization::initialAlign()
 {
     //using DTW
-    std::vector<std::vector<double>> slamdata;
-    slamdata.reserve(cloudKeyPoses6D->size());
-    for (const auto& p : cloudKeyPoses6D->points) {
-        slamdata.push_back({p.time, p.x, p.y, p.z});
-    }
+    // std::vector<std::vector<double>> slamdata;
+    // slamdata.reserve(cloudKeyPoses6D->size());
+    // for (const auto& p : cloudKeyPoses6D->points) {
+    //     slamdata.push_back({p.time, p.x, p.y, p.z});
+    // }
     
-    std::vector<std::vector<double>> gpsdata;
-    gpsdata.reserve(gpsQueue.size());
-    for (const auto& g : gpsQueue) {
-        gpsdata.push_back({
-            g.header.stamp.toSec(),
-            g.pose.pose.position.x,
-            g.pose.pose.position.y,
-            g.pose.pose.position.z
-        });
-    }
+    // std::vector<std::vector<double>> gpsdata;
+    // gpsdata.reserve(gpsQueue.size());
+    // for (const auto& g : gpsQueue) {
+    //     gpsdata.push_back({
+    //         g.header.stamp.toSec(),
+    //         g.pose.pose.position.x,
+    //         g.pose.pose.position.y,
+    //         g.pose.pose.position.z
+    //     });
+    // }
 
-    double avg_time_diff = calculateDtwTimeOffset(gpsdata, slamdata);
+    // double avg_time_diff = calculateDtwTimeOffset(gpsdata, slamdata);
     
-    ros::Duration time_offset(avg_time_diff);
+    // ros::Duration time_offset(avg_time_diff);
 
-    for(auto& g : gpsQueue) {
-        g.header.stamp += time_offset;
-    }
+    // for(auto& g : gpsQueue) {
+    //     g.header.stamp += time_offset;
+    // }
  
-    ROS_INFO("[initialAlign] 1. DTW calculated time offset: %.4f seconds.", avg_time_diff);
+    // ROS_INFO("[initialAlign] 1. DTW calculated time offset: %.4f seconds.", avg_time_diff);
 
     //using spline
     std::cout << " [initialAlign] initial align (using Spline)... " << std::endl;
