@@ -26,6 +26,8 @@
   <build_depend>tf</build_depend>
   <build_depend>pcl_ros</build_depend>
   <build_depend>message_generation</build_depend>
+  <build_depend>gnss_comm</build_depend>
+  <build_depend>eigen_conversions</build_depend>
   <build_depend>vikit_common</build_depend>
   <build_depend>vikit_ros</build_depend>
   <build_depend>cv_bridge</build_depend>
@@ -39,6 +41,8 @@
   <run_depend>tf</run_depend>
   <run_depend>pcl_ros</run_depend>
   <run_depend>message_runtime</run_depend>
+  <run_depend>gnss_comm</run_depend>
+  <run_depend>eigen_conversions</run_depend>
   <run_depend>vikit_common</run_depend>
   <run_depend>vikit_ros</run_depend>
   <run_depend>cv_bridge</run_depend>

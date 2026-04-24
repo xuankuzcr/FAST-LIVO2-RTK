@@ -99,6 +99,9 @@ find_package(PCL REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(Sophus REQUIRED)
 find_package(Boost REQUIRED COMPONENTS thread)
+if(EXISTS "/usr/share/cmake/geographiclib")
+  list(APPEND CMAKE_MODULE_PATH "/usr/share/cmake/geographiclib")
+endif()
 find_package(GeographicLib REQUIRED)
 find_package(GTSAM REQUIRED QUIET)
 find_package(Boost REQUIRED COMPONENTS timer)
@@ -107,7 +110,7 @@ set(Sophus_LIBRARIES libSophus.so)
 
 # Define the catkin package
 catkin_package(
-  CATKIN_DEPENDS geometry_msgs nav_msgs roscpp rospy std_msgs message_runtime cv_bridge vikit_common vikit_ros image_transport
+  CATKIN_DEPENDS geometry_msgs gnss_comm nav_msgs roscpp rospy sensor_msgs std_msgs tf message_runtime cv_bridge eigen_conversions vikit_common vikit_ros image_transport
   DEPENDS EIGEN3 PCL OpenCV Sophus
 )
 
@@ -133,6 +136,10 @@ add_library(optimization src/optimization.cpp)
 
 # Add the main executable
 add_executable(fastlivo_mapping src/main.cpp)
+
+add_dependencies(laser_mapping ${catkin_EXPORTED_TARGETS})
+add_dependencies(optimization ${catkin_EXPORTED_TARGETS})
+add_dependencies(fastlivo_mapping ${catkin_EXPORTED_TARGETS})
 
 # Link libraries to the executable
 target_link_libraries(fastlivo_mapping

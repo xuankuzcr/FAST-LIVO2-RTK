@@ -107,6 +107,13 @@ rosbag play YOUR_DOWNLOADED.bag
 We have integrated a Factor Graph-based RTK Post-Processing module into the original FAST-LIVO2 pipeline. By fusing RTK GPS signals, it eliminates the accumulated drift over long trajectories and outputs globally consistent trajectories and point cloud maps.
 
 ### 5.1 Additional Prerequisites
+The RTK branch also depends on the GNSS ROS message package used by the
+u-blox/GVINS toolchain. Put it in the same catkin workspace:
+```bash
+cd ~/catkin_ws/src
+git clone https://github.com/HKUST-Aerial-Robotics/gnss_comm.git
+```
+
 GTSAM Used for factor graph-based post-processing optimization. 
 ```bash
 git clone https://github.com/borglab/gtsam.git
@@ -118,8 +125,11 @@ sudo make install
 ```
 GeographicLib Used for converting geographic coordinates to local Cartesian coordinates.
 ```bash
-sudo apt-get install libgeographic-dev
+sudo apt-get install libgeographic-dev ros-${ROS_DISTRO}-eigen-conversions
 ```
+On Ubuntu 20.04, `libgeographic-dev` installs its CMake find module under
+`/usr/share/cmake/geographiclib`, which this repository's `CMakeLists.txt`
+adds to `CMAKE_MODULE_PATH`.
 ### 5.2 Run RTK Extension
 Download our newly provided RTK test rosbag file: ([**RTK-extention-Dataset**](https://drive.google.com/drive/folders/1fsUMNn0qgZ816zNcM7TCWYPf4QH1_1WO?usp=drive_link)). 
 
