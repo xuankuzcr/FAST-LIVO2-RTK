@@ -12,30 +12,59 @@ FAST-LIVO2-RTK extends FAST-LIVO2 with RTK/GNSS-constrained global optimization 
 
 ## Results
 
-The example below was collected in a challenging scene where both LiDAR geometry and visual texture are degraded. The local zoom-ins labeled `a2`, `b2`, and `c2` show the FAST-LIVO2 results, while `a1`, `b1`, and `c1` show the results after fusing RTK constraints.
+The example below was collected in a challenging scene where both LiDAR geometry and visual texture are degraded.
 
 <div align="center">
   <img src="docs/images/compare.jpg" width="900" alt="FAST-LIVO2 and FAST-LIVO2-RTK comparison in a degraded LiDAR-visual scene">
+  <br>
+  <sub><b>a2, b2, c2</b>: local zoom-ins from FAST-LIVO2. <b>a1, b1, c1</b>: corresponding results after fusing RTK constraints.</sub>
 </div>
 
 ## Hardware Platform
 
 The table below summarizes the main devices used by the platform.
 
-| Device | Image | Model Description |
-| --- | --- | --- |
-| LiDAR | <img src="docs/images/LiDAR.jpg" width="180" alt="Livox Mid-360 LiDAR"> | Model: Livox Mid-360 |
-| Camera | <img src="docs/images/camera.jpg" width="180" alt="MV-CB016-10GC-S-W camera"> | Model: MV-CB016-10GC-S-W |
-| GNSS Receiver | <img src="docs/images/ublox.jpg" width="180" alt="u-blox ZED-F9P GNSS receiver"> | Model: u-blox ZED-F9P |
-| Computing Unit | <img src="docs/images/n100.jpg" width="180" alt="N100 mini PC"> | Model: N100 mini PC |
-| Synchronization Controller | <img src="docs/images/stm32.jpg" width="180" alt="STM32 synchronization controller"> | Model: STM32 |
+<div align="center">
+  <table align="center">
+    <tr>
+      <th>Device</th>
+      <th>Image</th>
+      <th>Model Description</th>
+    </tr>
+    <tr>
+      <td align="center">LiDAR</td>
+      <td align="center"><img src="docs/images/LiDAR.jpg" width="180" alt="Livox Mid-360 LiDAR"></td>
+      <td align="center">Model: Livox Mid-360</td>
+    </tr>
+    <tr>
+      <td align="center">Camera</td>
+      <td align="center"><img src="docs/images/camera.jpg" width="180" alt="MV-CB016-10GC-S-W camera"></td>
+      <td align="center">Model: MV-CB016-10GC-S-W</td>
+    </tr>
+    <tr>
+      <td align="center">GNSS Receiver</td>
+      <td align="center"><img src="docs/images/ublox.jpg" width="180" alt="u-blox ZED-F9P GNSS receiver"></td>
+      <td align="center">Model: u-blox ZED-F9P</td>
+    </tr>
+    <tr>
+      <td align="center">Computing Unit</td>
+      <td align="center"><img src="docs/images/n100.jpg" width="180" alt="N100 mini PC"></td>
+      <td align="center">Model: N100 mini PC</td>
+    </tr>
+    <tr>
+      <td align="center">Synchronization Controller</td>
+      <td align="center"><img src="docs/images/stm32.jpg" width="180" alt="STM32 synchronization controller"></td>
+      <td align="center">Model: STM32</td>
+    </tr>
+  </table>
+</div>
 
 ## Time Synchronization
 
 The synchronization diagram shows the timing relationship between the LiDAR, camera, GNSS receiver, PPS/trigger signals, STM32 timing control, and ROS timestamps.
 
 <div align="center">
-  <img src="docs/images/sync.jpg" width="65%" alt="Time synchronization diagram">
+  <img src="docs/images/sync.jpg" width="50%" alt="Time synchronization diagram">
 </div>
 
 ## Installation
@@ -119,19 +148,6 @@ roslaunch fast_livo AGV.launch
 ```bash
 rosbag play AGV-LVGO-01-s55.bag -s 55 --duration 110
 ```
-
-3. Compare the generated global point cloud maps before and after optimization:
-
-```bash
-pcl_viewer -multiview 1 src/FAST-LIVO2/output/global_pcd/after_optimization.pcd src/FAST-LIVO2/output/global_pcd/before_optimization.pcd
-```
-
-Use absolute paths if your workspace layout differs from the command above.
-
-
-## Dataset
-
-- RTK test rosbag: [RTK-extension-Dataset](https://drive.google.com/drive/folders/1fsUMNn0qgZ816zNcM7TCWYPf4QH1_1WO?usp=drive_link)
 
 ## Acknowledgements
 
