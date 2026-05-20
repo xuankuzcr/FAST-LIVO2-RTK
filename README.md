@@ -12,41 +12,35 @@ FAST-LIVO2-RTK extends FAST-LIVO2 with RTK/GNSS-constrained global optimization 
 
 ## Results
 
-The following section is reserved for before/after optimization comparisons. Place the result images under `docs/images/` and update the paths if needed.
+The example below was collected in a challenging scene where both LiDAR geometry and visual texture are degraded. The local zoom-ins labeled `a2`, `b2`, and `c2` show the FAST-LIVO2 results, while `a1`, `b1`, and `c1` show the results after fusing RTK constraints.
 
-| Before Optimization | After Optimization |
-| --- | --- |
-| <img src="docs/images/before_optimization.png" width="420" alt="Point cloud map before RTK optimization"> | <img src="docs/images/after_optimization.png" width="420" alt="Point cloud map after RTK optimization"> |
-
-Optional trajectory comparison:
-
-| FAST-LIVO2 Trajectory | FAST-LIVO2-RTK Trajectory |
-| --- | --- |
-| <img src="docs/images/trajectory_before.png" width="420" alt="Trajectory before RTK optimization"> | <img src="docs/images/trajectory_after.png" width="420" alt="Trajectory after RTK optimization"> |
+<div align="center">
+  <img src="docs/images/compare.jpg" width="900" alt="FAST-LIVO2 and FAST-LIVO2-RTK comparison in a degraded LiDAR-visual scene">
+</div>
 
 ## Hardware Platform
 
-The table below summarizes the main devices used by the platform. Add detailed parameters, interfaces, and synchronization methods according to the actual data collection setup.
+The table below summarizes the main devices used by the platform.
 
 | Device | Image | Model Description |
 | --- | --- | --- |
-| LiDAR | <img src="docs/images/LiDAR.jpg" width="180" alt="Livox Mid-360 LiDAR"> | Model: Livox Mid-360<br>Key parameters: scan rate, field of view, timestamp source, LiDAR-IMU synchronization |
-| Camera | <img src="docs/images/camera.jpg" width="180" alt="MV-CB016-10GC-S-W camera"> | Model: MV-CB016-10GC-S-W<br>Key parameters: resolution, frame rate, exposure mode, external trigger configuration |
-| GNSS Receiver | <img src="docs/images/ublox.jpg" width="180" alt="u-blox ZED-F9P GNSS receiver"> | Model: u-blox ZED-F9P<br>Key parameters: frequency bands, RTK mode, PPS output, serial output, antenna configuration |
-| Computing Unit | <img src="docs/images/n100.jpg" width="180" alt="N100 mini PC"> | Model: N100 mini PC<br>Key parameters: CPU, memory, storage, network interfaces, ROS runtime environment |
-| Synchronization Controller | <img src="docs/images/stm32.jpg" width="180" alt="STM32 synchronization controller"> | Model: STM32<br>Key parameters: trigger signal generation, PPS input, GPIO timing, serial communication |
+| LiDAR | <img src="docs/images/LiDAR.jpg" width="180" alt="Livox Mid-360 LiDAR"> | Model: Livox Mid-360 |
+| Camera | <img src="docs/images/camera.jpg" width="180" alt="MV-CB016-10GC-S-W camera"> | Model: MV-CB016-10GC-S-W |
+| GNSS Receiver | <img src="docs/images/ublox.jpg" width="180" alt="u-blox ZED-F9P GNSS receiver"> | Model: u-blox ZED-F9P |
+| Computing Unit | <img src="docs/images/n100.jpg" width="180" alt="N100 mini PC"> | Model: N100 mini PC |
+| Synchronization Controller | <img src="docs/images/stm32.jpg" width="180" alt="STM32 synchronization controller"> | Model: STM32 |
 
 ## Time Synchronization
 
 The synchronization diagram shows the timing relationship between the LiDAR, camera, GNSS receiver, PPS/trigger signals, STM32 timing control, and ROS timestamps.
 
 <div align="center">
-  <img src="docs/images/sync.jpg" width="850" alt="Time synchronization diagram">
+  <img src="docs/images/sync.jpg" width="65%" alt="Time synchronization diagram">
 </div>
 
 ## Installation
 
-### System Dependencies
+### LIVO Dependencies
 
 #### Ubuntu and ROS
 
@@ -78,7 +72,6 @@ sudo make install
 Vikit contains camera models and the math/interpolation functions required by this project. Vikit is a catkin project, so download it into the source folder of your catkin workspace.
 
 ```bash
-# Different from the one used in fast-livo1
 cd catkin_ws/src
 git clone https://github.com/xuankuzcr/rpg_vikit.git
 ```
