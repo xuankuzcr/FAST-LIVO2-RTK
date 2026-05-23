@@ -1,24 +1,105 @@
 # FAST-LIVO2-RTK
 
-FAST-LIVO2-RTK extends FAST-LIVO2 with RTK/GNSS-constrained global optimization for long-term LiDAR-inertial-visual mapping. It reduces accumulated drift by fusing GNSS observations in a factor graph backend and produces globally consistent trajectories and point cloud maps.
+FAST-LIVO2-RTK extends FAST-LIVO2 with RTK/GNSS-constrained global optimization for long-term LiDAR-visual mapping.
 
-## Highlights
+**Key highlights include:**
 
-- Fully Open-Source & Reproducible: Complete open-source software and hardware setup guaranteeing fully reproducible LIVO-RTK experiments.
-- Robust Initialization Module: Built-in initialization featuring DTW-based time offset estimation and hand-eye extrinsic calibration.
-- LIVO-RTK Fusion Paradigm: A comprehensive example paradigm for fusing LIVO trajectories with RTK observations, complete with hardware setup, datasets, and workflows.
+1. Fully Reproducible: Complete open-source software and hardware setup guaranteeing fully reproducible LIVO-RTK experiments.
+2. Robust Initialization Module: Built-in initialization featuring DTW-based time offset estimation and hand-eye extrinsic calibration.
+3. LIV-RTK Fusion Paradigm: A comprehensive example paradigm for fusing LIVO trajectories with RTK observations.
 
-## Results
-
-The example below was collected in a challenging scene where both LiDAR geometry and visual texture are degraded.
+📬 For further assistance or inquiries, please feel free to contact Chunran Zheng at [zhengcr@connect.hku.hk](mailto:zhengcr@connect.hku.hk).
 
 <div align="center">
-  <img src="docs/images/compare.jpg" width="900" alt="FAST-LIVO2 and FAST-LIVO2-RTK comparison in a degraded LiDAR-visual scene">
+  <img src="docs/images/compare.jpg" width="100%" alt="FAST-LIVO2 and FAST-LIVO2-RTK comparison in a degraded LiDAR-visual scene">
   <br>
-  <sub><b>a2, b2, c2</b>: local zoom-ins from FAST-LIVO2. <b>a1, b1, c1</b>: corresponding results after fusing RTK constraints.</sub>
+  <sub>Collected in a challenging scene with degraded geometry and texture.
+<b>a2, b2, c2</b>: FAST-LIVO2 baseline. <b>a1, b1, c1</b>: results after RTK fusion.</sub>
 </div>
 
-## Hardware Platform
+## 1. Prerequisited
+
+### 1.1 Ubuntu and ROS
+
+Ubuntu 18.04~20.04. See [ROS Installation](http://wiki.ros.org/ROS/Installation).
+
+### 1.2 PCL, Eigen, and OpenCV
+
+PCL>=1.8, Eigen>=3.3.4, OpenCV>=4.2.
+
+### 1.3 Sophus
+
+Install the non-templated/double-only version of Sophus.
+
+```bash
+git clone https://github.com/strasdat/Sophus.git
+cd Sophus
+git checkout a621ff
+mkdir build && cd build && cmake ..
+make
+sudo make install
+```
+
+### 1.4 Vikit
+
+Vikit provides the camera models and math utilities required by this project. Put it in your catkin workspace source folder.
+
+```bash
+cd ~/catkin_ws/src
+git clone https://github.com/xuankuzcr/rpg_vikit.git
+```
+
+### 1.5 RTK Dependencies
+
+The RTK branch depends on the GNSS ROS message package used by the u-blox/GVINS toolchain. Put it in the same catkin workspace:
+
+```bash
+cd ~/catkin_ws/src
+git clone https://github.com/HKUST-Aerial-Robotics/gnss_comm.git
+```
+
+GTSAM is used for factor graph-based post-processing optimization.
+
+```bash
+git clone https://github.com/borglab/gtsam.git
+cd gtsam
+mkdir build && cd build
+cmake -DGTSAM_BUILD_WITH_MARCH_NATIVE=OFF -DGTSAM_USE_SYSTEM_EIGEN=ON ..
+make -j$(nproc)
+sudo make install
+```
+
+GeographicLib is used for converting geographic coordinates to local Cartesian coordinates.
+
+```bash
+sudo apt-get install libgeographic-dev ros-${ROS_DISTRO}-eigen-conversions
+```
+
+## 2. Run our examples
+
+Download the provided RTK test rosbag file: [RTK-Dataset](https://drive.google.com/file/d/1RIRcqjaw3x8l-S-Dc655xHi_bKkI7q66/view?usp=sharing).
+
+1. Launch the system and load the configuration file:
+
+```bash
+roslaunch fast_livo HH.launch
+```
+
+2. Play the rosbag. Once the sequence is finished, press `Enter` in the terminal running the launch file to trigger the backend optimizer.
+
+```bash
+rosbag play HH-LVGO-01.bag
+```
+## 3. Appendix
+**Time Synchronization:**
+
+The diagram illustrates the time synchronization scheme among GNSS, LiDAR, and image data.
+
+<div align="center">
+  <img src="docs/images/sync.jpg" width="50%" alt="Time synchronization diagram">
+</div>
+
+**Hardware Platform:**
 
 The table below summarizes the main devices used by the platform.
 
@@ -57,90 +138,6 @@ The table below summarizes the main devices used by the platform.
   </table>
 </div>
 
-## Time Synchronization
-
-The diagram illustrates the time synchronization scheme among GNSS, LiDAR, and image data.
-
-<div align="center">
-  <img src="docs/images/sync.jpg" width="50%" alt="Time synchronization diagram">
-</div>
-
-## Installation
-
-### LIVO Dependencies
-
-#### Ubuntu and ROS
-
-Ubuntu 18.04~20.04. See [ROS Installation](http://wiki.ros.org/ROS/Installation).
-
-#### PCL, Eigen, and OpenCV
-
-PCL>=1.8, Eigen>=3.3.4, OpenCV>=4.2.
-
-#### Sophus
-
-Install the non-templated/double-only version of Sophus.
-
-```bash
-git clone https://github.com/strasdat/Sophus.git
-cd Sophus
-git checkout a621ff
-mkdir build && cd build && cmake ..
-make
-sudo make install
-```
-
-#### Vikit
-
-Vikit provides the camera models and math utilities required by this project. Put it in your catkin workspace source folder.
-
-```bash
-cd ~/catkin_ws/src
-git clone https://github.com/xuankuzcr/rpg_vikit.git
-```
-
-### RTK Dependencies
-
-The RTK branch also depends on the GNSS ROS message package used by the u-blox/GVINS toolchain. Put it in the same catkin workspace:
-
-```bash
-cd ~/catkin_ws/src
-git clone https://github.com/HKUST-Aerial-Robotics/gnss_comm.git
-```
-
-GTSAM is used for factor graph-based post-processing optimization.
-
-```bash
-git clone https://github.com/borglab/gtsam.git
-cd gtsam
-mkdir build && cd build
-cmake -DGTSAM_BUILD_WITH_MARCH_NATIVE=OFF -DGTSAM_USE_SYSTEM_EIGEN=ON ..
-make -j$(nproc)
-sudo make install
-```
-
-GeographicLib is used for converting geographic coordinates to local Cartesian coordinates.
-
-```bash
-sudo apt-get install libgeographic-dev ros-${ROS_DISTRO}-eigen-conversions
-```
-
-## Quick Start
-
-Download the provided RTK test rosbag file: [RTK-extension-Dataset](https://drive.google.com/file/d/1RIRcqjaw3x8l-S-Dc655xHi_bKkI7q66/view?usp=sharing).
-
-1. Launch the system and load the configuration file:
-
-```bash
-roslaunch fast_livo HH.launch
-```
-
-2. Play the rosbag. Once the sequence is finished, press `Enter` in the terminal running the launch file to trigger the backend optimizer.
-
-```bash
-rosbag play HH-LVGO-01.bag
-```
-
-## Acknowledgements
+## 4. Acknowledgements
 
 This repository is built on top of [FAST-LIVO2](https://github.com/hku-mars/FAST-LIVO2) and uses several open-source libraries and packages, including [GTSAM](https://github.com/borglab/gtsam), [GeographicLib](https://geographiclib.sourceforge.io/), and [gnss_comm](https://github.com/HKUST-Aerial-Robotics/gnss_comm).
