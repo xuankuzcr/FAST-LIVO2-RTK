@@ -59,10 +59,8 @@ optimization::~optimization()
 void optimization::offlineOptimizationTask() {
     std::cin.get();
     std::cout << "[Offline Optimization] Starting batch optimization..." << std::endl;
-    
     initialAlign();
     std::cout << "[Offline Optimization] Initial alignment done." << std::endl;
-    
     writeOptimizedTumTrajectory();
     saveOptimizedGlobalMap();
     std::cout << "[Offline Optimization] Initial global map and tum saved." << std::endl;
@@ -74,15 +72,11 @@ void optimization::offlineOptimizationTask() {
     params.setRelativeErrorTol(1e-9);
     params.setAbsoluteErrorTol(1e-9);
     
-    if(gps_en)
-    {
-        addrtkfactor_ = true;
-        buildBatchGraph();
-        gtsam::LevenbergMarquardtOptimizer optimizer(gtSAMgraph, initialEstimate);
-        gtsam::Values result = optimizer.optimize();
-        initialEstimate = result;
-        std::cout << "[Offline Optimization] First optimization pass done." <<  std::endl;
-    }
+    buildBatchGraph();
+    gtsam::LevenbergMarquardtOptimizer optimizer(gtSAMgraph, initialEstimate);
+    gtsam::Values result = optimizer.optimize();
+    initialEstimate = result;
+    std::cout << "[Offline Optimization] First optimization pass done." <<  std::endl;
 
     is_optimized = true;
     int numPoses = initialEstimate.size();
@@ -515,7 +509,7 @@ void optimization::buildBatchGraph()
     gtsam::noiseModel::Diagonal::shared_ptr odometryNoise = 
         gtsam::noiseModel::Diagonal::Variances((gtsam::Vector(6) << livo2_RPY_cov, livo2_RPY_cov, livo2_RPY_cov, livo2_XYZ_cov, livo2_XYZ_cov, livo2_XYZ_cov).finished());
     gtsam::noiseModel::Diagonal::shared_ptr gps_noise =
-        gtsam::noiseModel::Diagonal::Variances((gtsam::Vector(3) << rtk_cov, rtk_cov, rtk_cov).finished());
+        gtsam::noiseModel::Diagonal::Variances((gtsam::Vector(3) << rtk_cov, rtk_cov, 1).finished());
 
     size_t rtk_idx = 0; 
 
@@ -536,20 +530,18 @@ void optimization::buildBatchGraph()
         }
 
         // addrtkfactor
-        if(addrtkfactor_)
-        {
-            auto it = gpsQueue_B[i];
-            double x = it.pose.pose.position.x;
-            double y = it.pose.pose.position.y;
-            double z = it.pose.pose.position.z;
-            gtsam::Point3 gps_point(x, y, z);
+        auto it = gpsQueue_B[i];
+        double x = it.pose.pose.position.x;
+        double y = it.pose.pose.position.y;
+        double z = it.pose.pose.position.z;
+        gtsam::Point3 gps_point(x, y, z);
 
-            double cov_x = it.pose.covariance[0]; 
-            double cov_y = it.pose.covariance[7]; 
-            double cov_z = it.pose.covariance[14]; 
+        double cov_x = it.pose.covariance[0]; 
+        double cov_y = it.pose.covariance[7]; 
+        double cov_z = it.pose.covariance[14]; 
 
-            gtSAMgraph.add(gtsam::GPSFactor(i, gps_point, gps_noise));
-        }
+        gtSAMgraph.add(gtsam::GPSFactor(i, gps_point, gps_noise));
+
     }
 } 
 

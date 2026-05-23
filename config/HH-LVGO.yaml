@@ -95,6 +95,6 @@ gps:
 
 opt:
   load_data: false
-  rtk_cov: 0.02
+  rtk_cov: 0.01
   livo2_RPY_cov: 0.00000001
-  livo2_XYZ_cov: 0.0001
+  livo2_XYZ_cov: 0.001
