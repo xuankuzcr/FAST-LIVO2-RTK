@@ -1,14 +1,12 @@
 # FAST-LIVO2-RTK
 
-FAST-LIVO2-RTK extends FAST-LIVO2 with RTK/GNSS-constrained global optimization for long-range LiDAR-inertial-visual mapping. It reduces accumulated drift by fusing GNSS observations in a factor graph backend and produces globally consistent trajectories and point cloud maps.
+FAST-LIVO2-RTK extends FAST-LIVO2 with RTK/GNSS-constrained global optimization for long-term LiDAR-inertial-visual mapping. It reduces accumulated drift by fusing GNSS observations in a factor graph backend and produces globally consistent trajectories and point cloud maps.
 
 ## Highlights
 
-- RTK/GNSS post-processing constraints for long-trajectory drift correction.
-- Factor graph-based global optimization built on GTSAM.
-- Globally aligned point cloud map output before and after optimization.
-- Hardware platform with LiDAR, camera, GNSS receiver, mini PC, and STM32 synchronization controller.
-- Example RTK rosbag and reproducible command-line workflow.
+- Fully Open-Source & Reproducible: Complete open-source software and hardware setup guaranteeing fully reproducible LIVO-RTK experiments.
+- Robust Initialization Module: Built-in initialization featuring DTW-based time offset estimation and hand-eye extrinsic calibration.
+- LIVO-RTK Fusion Paradigm: A comprehensive example paradigm for fusing LIVO trajectories with RTK observations, complete with hardware setup, datasets, and workflows.
 
 ## Results
 
@@ -61,7 +59,7 @@ The table below summarizes the main devices used by the platform.
 
 ## Time Synchronization
 
-The synchronization diagram shows the timing relationship between the LiDAR, camera, GNSS receiver, PPS/trigger signals, STM32 timing control, and ROS timestamps.
+The diagram illustrates the time synchronization scheme among GNSS, LiDAR, and image data.
 
 <div align="center">
   <img src="docs/images/sync.jpg" width="50%" alt="Time synchronization diagram">
@@ -77,11 +75,7 @@ Ubuntu 18.04~20.04. See [ROS Installation](http://wiki.ros.org/ROS/Installation)
 
 #### PCL, Eigen, and OpenCV
 
-PCL>=1.8. See [PCL Installation](https://pointclouds.org/).
-
-Eigen>=3.3.4. See [Eigen Installation](https://eigen.tuxfamily.org/index.php?title=Main_Page).
-
-OpenCV>=4.2. See [OpenCV Installation](http://opencv.org/).
+PCL>=1.8, Eigen>=3.3.4, OpenCV>=4.2.
 
 #### Sophus
 
@@ -98,10 +92,10 @@ sudo make install
 
 #### Vikit
 
-Vikit contains camera models and the math/interpolation functions required by this project. Vikit is a catkin project, so download it into the source folder of your catkin workspace.
+Vikit provides the camera models and math utilities required by this project. Put it in your catkin workspace source folder.
 
 ```bash
-cd catkin_ws/src
+cd ~/catkin_ws/src
 git clone https://github.com/xuankuzcr/rpg_vikit.git
 ```
 
@@ -131,24 +125,22 @@ GeographicLib is used for converting geographic coordinates to local Cartesian c
 sudo apt-get install libgeographic-dev ros-${ROS_DISTRO}-eigen-conversions
 ```
 
-On Ubuntu 20.04, `libgeographic-dev` installs its CMake find module under `/usr/share/cmake/geographiclib`, which this repository's `CMakeLists.txt` adds to `CMAKE_MODULE_PATH`.
-
 ## Quick Start
 
-Download the provided RTK test rosbag file: [RTK-extension-Dataset](https://drive.google.com/drive/folders/1fsUMNn0qgZ816zNcM7TCWYPf4QH1_1WO?usp=drive_link).
+Download the provided RTK test rosbag file: [RTK-extension-Dataset](https://drive.google.com/file/d/1RIRcqjaw3x8l-S-Dc655xHi_bKkI7q66/view?usp=sharing).
 
-1. Launch the system and load the UAV/AGV configuration file:
+1. Launch the system and load the configuration file:
 
 ```bash
-roslaunch fast_livo AGV.launch
+roslaunch fast_livo HH.launch
 ```
 
 2. Play the rosbag. Once the sequence is finished, press `Enter` in the terminal running the launch file to trigger the backend optimizer.
 
 ```bash
-rosbag play AGV-LVGO-01-s55.bag -s 55 --duration 110
+rosbag play HH-LVGO-01.bag
 ```
 
 ## Acknowledgements
 
-This repository is built on top of FAST-LIVO2 and uses several open-source libraries and packages, including GTSAM, GeographicLib, and `gnss_comm`.
+This repository is built on top of [FAST-LIVO2](https://github.com/hku-mars/FAST-LIVO2) and uses several open-source libraries and packages, including [GTSAM](https://github.com/borglab/gtsam), [GeographicLib](https://geographiclib.sourceforge.io/), and [gnss_comm](https://github.com/HKUST-Aerial-Robotics/gnss_comm).
