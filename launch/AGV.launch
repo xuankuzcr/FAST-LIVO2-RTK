@@ -2,12 +2,13 @@
 <!-- Launch file for Livox AVIA LiDAR -->
 
 	<arg name="rviz" default="true" />
+	<arg name="outputfilepath" default="$(find fast_livo)/output" />
 
 	<rosparam command="load" file="$(find fast_livo)/config/AGV-LVGO.yaml" />
 
 	<node pkg="fast_livo" type="fastlivo_mapping" name="laserMapping" output="screen">
-		<rosparam file="$(find fast_livo)/config/camera.yaml" />
-		<param name="outputfilepath" value="$(find fast_livo)/output" />
+		<rosparam file="$(find fast_livo)/config/camera_AGV-LVGO-02.yaml" />
+		<param name="outputfilepath" value="$(arg outputfilepath)" />
 	
 	</node>
 	

@@ -1,15 +1,354 @@
 #include "optimization.h"
 
+#include <algorithm>
+#include <cerrno>
+#include <cstdlib>
+#include <cmath>
+#include <limits>
+#include <numeric>
+
+#include <sys/select.h>
+#include <unistd.h>
+
+namespace {
+struct VelocitySeries
+{
+    std::vector<double> times;
+    std::vector<double> values;
+};
+
+std::string shellQuote(const std::string& value)
+{
+    std::string quoted = "'";
+    for (char c : value) {
+        if (c == '\'') {
+            quoted += "'\\''";
+        } else {
+            quoted += c;
+        }
+    }
+    quoted += "'";
+    return quoted;
+}
+
+void ensureDirectory(const std::string& path)
+{
+    if (path.empty()) {
+        return;
+    }
+    const std::string command = "mkdir -p " + shellQuote(path);
+    const int rc = std::system(command.c_str());
+    if (rc != 0) {
+        ROS_WARN("[optimization] failed to create output directory: %s", path.c_str());
+    }
+}
+
+bool interpolateLinear(const VelocitySeries& series, double t, double& value)
+{
+    if (series.times.size() < 2 || t < series.times.front() || t > series.times.back()) {
+        return false;
+    }
+
+    auto upper = std::upper_bound(series.times.begin(), series.times.end(), t);
+    if (upper == series.times.begin()) {
+        value = series.values.front();
+        return true;
+    }
+    if (upper == series.times.end()) {
+        value = series.values.back();
+        return true;
+    }
+
+    const size_t i = static_cast<size_t>(upper - series.times.begin());
+    const double t0 = series.times[i - 1];
+    const double t1 = series.times[i];
+    if (t1 <= t0) {
+        return false;
+    }
+
+    const double a = (t - t0) / (t1 - t0);
+    value = series.values[i - 1] * (1.0 - a) + series.values[i] * a;
+    return true;
+}
+
+bool waitForOptimizationTrigger(const std::atomic_bool& shutdown_requested)
+{
+    while (ros::ok() && !shutdown_requested.load(std::memory_order_relaxed)) {
+        fd_set read_set;
+        FD_ZERO(&read_set);
+        FD_SET(STDIN_FILENO, &read_set);
+
+        timeval timeout;
+        timeout.tv_sec = 0;
+        timeout.tv_usec = 100000;
+
+        const int rc = select(STDIN_FILENO + 1, &read_set, nullptr, nullptr, &timeout);
+        if (rc < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            ROS_WARN("[Offline Optimization] stdin wait failed, optimization trigger disabled.");
+            return false;
+        }
+
+        if (rc == 0 || !FD_ISSET(STDIN_FILENO, &read_set)) {
+            continue;
+        }
+
+        char ch = '\0';
+        const ssize_t nread = read(STDIN_FILENO, &ch, 1);
+        if (nread <= 0) {
+            ROS_INFO("[Offline Optimization] stdin closed before optimization trigger.");
+            return false;
+        }
+        if (ch == '\n') {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void smoothVelocitySeries(VelocitySeries& series)
+{
+    if (series.values.size() < 5) {
+        return;
+    }
+
+    std::vector<double> smoothed(series.values.size(), 0.0);
+    for (size_t i = 0; i < series.values.size(); ++i) {
+        const size_t begin = (i < 2) ? 0 : i - 2;
+        const size_t end = std::min(series.values.size() - 1, i + 2);
+        double sum = 0.0;
+        for (size_t j = begin; j <= end; ++j) {
+            sum += series.values[j];
+        }
+        smoothed[i] = sum / static_cast<double>(end - begin + 1);
+    }
+    series.values.swap(smoothed);
+}
+
+bool normalizeVelocitySeries(VelocitySeries& series)
+{
+    if (series.values.size() < 20) {
+        return false;
+    }
+
+    const double mean = std::accumulate(series.values.begin(), series.values.end(), 0.0)
+                      / static_cast<double>(series.values.size());
+    double sq_sum = 0.0;
+    for (double v : series.values) {
+        const double d = v - mean;
+        sq_sum += d * d;
+    }
+
+    const double stddev = std::sqrt(sq_sum / static_cast<double>(series.values.size()));
+    if (!std::isfinite(stddev) || stddev < 0.05) {
+        return false;
+    }
+
+    for (double& v : series.values) {
+        v = (v - mean) / stddev;
+    }
+    return true;
+}
+
+VelocitySeries buildVelocitySeries(const std::vector<std::vector<double>>& data, double time_shift)
+{
+    VelocitySeries series;
+    if (data.size() < 3) {
+        return series;
+    }
+
+    constexpr int IDX_TIME = 0;
+    constexpr int IDX_X = 1;
+    constexpr int IDX_Y = 2;
+    constexpr int IDX_Z = 3;
+    constexpr double MIN_DT = 1e-3;
+    constexpr double MAX_DT = 2.0;
+    constexpr double MAX_SPEED = 100.0;
+
+    series.times.reserve(data.size() - 1);
+    series.values.reserve(data.size() - 1);
+
+    for (size_t i = 1; i < data.size(); ++i) {
+        if (data[i].size() < 4 || data[i - 1].size() < 4) {
+            continue;
+        }
+
+        const double t0 = data[i - 1][IDX_TIME];
+        const double t1 = data[i][IDX_TIME];
+        const double dt = t1 - t0;
+        if (!std::isfinite(dt) || dt < MIN_DT || dt > MAX_DT) {
+            continue;
+        }
+
+        const double dx = data[i][IDX_X] - data[i - 1][IDX_X];
+        const double dy = data[i][IDX_Y] - data[i - 1][IDX_Y];
+        const double dz = data[i][IDX_Z] - data[i - 1][IDX_Z];
+        const double speed = std::sqrt(dx * dx + dy * dy + dz * dz) / dt;
+        if (!std::isfinite(speed) || speed > MAX_SPEED) {
+            continue;
+        }
+
+        series.times.push_back(0.5 * (t0 + t1) + time_shift);
+        series.values.push_back(speed);
+    }
+
+    smoothVelocitySeries(series);
+    return series;
+}
+
+VelocitySeries buildVelocitySeriesFromSamples(const std::vector<std::vector<double>>& data, double time_shift)
+{
+    VelocitySeries series;
+    if (data.size() < 3) {
+        return series;
+    }
+
+    constexpr int IDX_TIME = 0;
+    constexpr int IDX_VX = 1;
+    constexpr int IDX_VY = 2;
+    constexpr int IDX_VZ = 3;
+    constexpr double MIN_DT = 1e-3;
+    constexpr double MAX_DT = 2.0;
+    constexpr double MAX_SPEED = 100.0;
+
+    series.times.reserve(data.size());
+    series.values.reserve(data.size());
+
+    double last_time = std::numeric_limits<double>::quiet_NaN();
+    for (const auto& sample : data) {
+        if (sample.size() < 4) {
+            continue;
+        }
+
+        const double t = sample[IDX_TIME];
+        if (!std::isfinite(t)) {
+            continue;
+        }
+        if (std::isfinite(last_time)) {
+            const double dt = t - last_time;
+            if (dt < MIN_DT || dt > MAX_DT) {
+                last_time = t;
+                continue;
+            }
+        }
+
+        const double vx = sample[IDX_VX];
+        const double vy = sample[IDX_VY];
+        const double vz = sample[IDX_VZ];
+        const double speed = std::sqrt(vx * vx + vy * vy + vz * vz);
+        if (!std::isfinite(speed) || speed > MAX_SPEED) {
+            last_time = t;
+            continue;
+        }
+
+        series.times.push_back(t + time_shift);
+        series.values.push_back(speed);
+        last_time = t;
+    }
+
+    smoothVelocitySeries(series);
+    return series;
+}
+
+double scoreVelocityOffset(const VelocitySeries& slam,
+                           const VelocitySeries& gps,
+                           double fine_offset,
+                           int& pair_count)
+{
+    double sum_sg = 0.0;
+    double sum_ss = 0.0;
+    double sum_gg = 0.0;
+    pair_count = 0;
+
+    for (size_t i = 0; i < slam.times.size(); ++i) {
+        double gps_value = 0.0;
+        if (!interpolateLinear(gps, slam.times[i] - fine_offset, gps_value)) {
+            continue;
+        }
+
+        const double slam_value = slam.values[i];
+        sum_sg += slam_value * gps_value;
+        sum_ss += slam_value * slam_value;
+        sum_gg += gps_value * gps_value;
+        ++pair_count;
+    }
+
+    if (pair_count < 30 || sum_ss <= 1e-12 || sum_gg <= 1e-12) {
+        return -std::numeric_limits<double>::infinity();
+    }
+
+    return sum_sg / std::sqrt(sum_ss * sum_gg);
+}
+
+void writeVelocityAlignmentCsv(const std::string& csv_path,
+                               const std::vector<std::vector<double>>& gps_position_data,
+                               const std::vector<std::vector<double>>& slam_position_data,
+                               const std::vector<std::vector<double>>& gps_velocity_data,
+                               const std::vector<std::vector<double>>& slam_velocity_data,
+                               const std::string& velocity_source,
+                               double coarse_time_offset,
+                               double applied_fine_offset)
+{
+    VelocitySeries slam_velocity;
+    VelocitySeries gps_velocity;
+    if (velocity_source == "direct_twist") {
+        slam_velocity = buildVelocitySeriesFromSamples(slam_velocity_data, 0.0);
+        gps_velocity = buildVelocitySeriesFromSamples(gps_velocity_data, coarse_time_offset);
+    } else {
+        slam_velocity = buildVelocitySeries(slam_position_data, 0.0);
+        gps_velocity = buildVelocitySeries(gps_position_data, coarse_time_offset);
+    }
+
+    std::ofstream csv_file(csv_path);
+    if (!csv_file.is_open()) {
+        return;
+    }
+
+    csv_file << std::fixed << std::setprecision(9);
+    csv_file << "time_sec,livo_speed_mps,rtk_speed_coarse_mps,rtk_speed_applied_mps\n";
+    for (size_t i = 0; i < slam_velocity.times.size(); ++i) {
+        const double t = slam_velocity.times[i];
+        double gps_speed_coarse = 0.0;
+        double gps_speed_applied = 0.0;
+        const bool has_coarse = interpolateLinear(gps_velocity, t, gps_speed_coarse);
+        const bool has_applied = interpolateLinear(gps_velocity, t - applied_fine_offset, gps_speed_applied);
+
+        csv_file << t << "," << slam_velocity.values[i] << ",";
+        if (has_coarse) {
+            csv_file << gps_speed_coarse;
+        }
+        csv_file << ",";
+        if (has_applied) {
+            csv_file << gps_speed_applied;
+        }
+        csv_file << "\n";
+    }
+}
+} // namespace
+
 optimization::optimization(ros::NodeHandle &nh)
 {
     nh.param<std::string>("laserMapping/outputfilepath", outputfilepath, "");
     debug_optdata_path_ = outputfilepath + "/debug/";
     opt_tum_output_path_ = outputfilepath + "/TUM/opt_trajectory_after.txt";
-    gps_tum_output_path_ = outputfilepath + "/TUM/opt_trajectory_before.txt";
+    livo_tum_before_output_path_ = outputfilepath + "/TUM/livo_trajectory_before.txt";
+    rtk_tum_output_path_ = outputfilepath + "/TUM/rtk_trajectory_time_aligned.txt";
     opt_vel_output_path_ = outputfilepath + "/vel/opt_vel.txt";
     gps_vel_output_path_ = outputfilepath + "/vel/gps_vel.txt";
     global_map_pcd_path_ = outputfilepath + "/global_pcd/";
     keyframe_scan_pcd_path_ = outputfilepath + "/scan_pcd/";
+
+    if (!outputfilepath.empty()) {
+        ensureDirectory(debug_optdata_path_);
+        ensureDirectory(debug_optdata_path_ + "pcd/");
+        ensureDirectory(outputfilepath + "/TUM/");
+        ensureDirectory(outputfilepath + "/vel/");
+        ensureDirectory(global_map_pcd_path_);
+        ensureDirectory(keyframe_scan_pcd_path_);
+    }
 
     nh.param<string>("gps/gps_topic", gps_topic, "/ublox_driver/receiver_lla");
     nh.param<double>("gps/gps_time_offset", gps_offset, 0.0);
@@ -35,17 +374,13 @@ optimization::optimization(ros::NodeHandle &nh)
     sync_ = std::make_unique<message_filters::Synchronizer<SyncPolicy>>(SyncPolicy(10), subOdom_, subCloud_);
     sync_->registerCallback(boost::bind(&optimization::syncedCallback, this, _1, _2));
 
-    laserCloudSurfLastDS.reset(new PointCloudXYZRGB());
-    cloudKeyPoses6D.reset(new pcl::PointCloud<PointTypePose>());
-
-    for (int i = 0; i < 6; ++i) {
-        transformTobeMapped[i] = 0;
-    }
+    keyFrames.clear();
 
     if(debug_mode)
     {
         loadData(debug_optdata_path_);
     }
+    last_keyframe_wall_time_ = ros::WallTime::now();
 
     ROS_INFO("Optimization mode: [OFFLINE]. Accumulating factors for batch optimization.");
     optimization_thread_ = std::thread(&optimization::offlineOptimizationTask, this);
@@ -53,15 +388,27 @@ optimization::optimization(ros::NodeHandle &nh)
 
 optimization::~optimization() 
 {
+    optimization_shutdown_requested_.store(true, std::memory_order_relaxed);
+    if (optimization_thread_.joinable()) {
+        optimization_thread_.join();
+    }
 }
 
 //Optimize threads
 void optimization::offlineOptimizationTask() {
-    std::cin.get();
+    if (!waitForOptimizationTrigger(optimization_shutdown_requested_)) {
+        return;
+    }
+
+    waitForKeyFrameIdle(3.0);
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        accepting_keyframes_ = false;
+    }
     std::cout << "[Offline Optimization] Starting batch optimization..." << std::endl;
     initialAlign();
     std::cout << "[Offline Optimization] Initial alignment done." << std::endl;
-    writeOptimizedTumTrajectory();
+    writeTumTrajectory(livo_tum_before_output_path_);
     saveOptimizedGlobalMap();
     std::cout << "[Offline Optimization] Initial global map and tum saved." << std::endl;
     
@@ -83,12 +430,7 @@ void optimization::offlineOptimizationTask() {
 
     for (int i = 0; i < numPoses; ++i) {
         gtsam::Pose3 rtk_optimizedPose = initialEstimate.at<gtsam::Pose3>(i);
-        cloudKeyPoses6D->points[i].x     = rtk_optimizedPose.translation().x();
-        cloudKeyPoses6D->points[i].y     = rtk_optimizedPose.translation().y();
-        cloudKeyPoses6D->points[i].z     = rtk_optimizedPose.translation().z();
-        cloudKeyPoses6D->points[i].roll  = rtk_optimizedPose.rotation().roll();
-        cloudKeyPoses6D->points[i].pitch = rtk_optimizedPose.rotation().pitch();
-        cloudKeyPoses6D->points[i].yaw   = rtk_optimizedPose.rotation().yaw();
+        keyFrames[i].pose = rtk_optimizedPose;
     }
 
     writeOptimizedTumTrajectory();
@@ -99,12 +441,7 @@ void optimization::offlineOptimizationTask() {
     for (int i = 0; i < numPoses; ++i) {
         gtsam::Pose3 rtk_optimizedPose = initialEstimate.at<gtsam::Pose3>(i);
         gtsam::Pose3 imu_optimizedPose = rtk_optimizedPose.compose((T_imu_rtk).inverse());
-        cloudKeyPoses6D->points[i].x     = imu_optimizedPose.translation().x();
-        cloudKeyPoses6D->points[i].y     = imu_optimizedPose.translation().y();
-        cloudKeyPoses6D->points[i].z     = imu_optimizedPose.translation().z();
-        cloudKeyPoses6D->points[i].roll  = imu_optimizedPose.rotation().roll();
-        cloudKeyPoses6D->points[i].pitch = imu_optimizedPose.rotation().pitch();
-        cloudKeyPoses6D->points[i].yaw   = imu_optimizedPose.rotation().yaw();
+        keyFrames[i].pose = imu_optimizedPose;
     }
 
     std::cout << "[Offline Optimization] Saving maps and trajectories..." << std::endl;
@@ -115,30 +452,58 @@ void optimization::offlineOptimizationTask() {
     std::cout << "[Offline Optimization] Finished." << std::endl;
 }
 
-void optimization::saveKeyFramesAndFactor()
+void optimization::waitForKeyFrameIdle(double idle_seconds)
+{
+    const ros::WallDuration idle_duration(idle_seconds);
+    size_t last_count = 0;
+    while (ros::ok()) {
+        size_t current_count = 0;
+        ros::WallTime last_keyframe_time;
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            current_count = keyFrames.size();
+            last_keyframe_time = last_keyframe_wall_time_;
+        }
+
+        const ros::WallDuration idle_time = ros::WallTime::now() - last_keyframe_time;
+        if (current_count > 0 && idle_time >= idle_duration) {
+            ROS_INFO("[Offline Optimization] Keyframe buffer idle for %.2fs, frozen at %zu frames.",
+                     idle_time.toSec(), current_count);
+            return;
+        }
+
+        if (current_count != last_count) {
+            ROS_INFO("[Offline Optimization] Waiting for keyframe buffer to drain: %zu frames.", current_count);
+            last_count = current_count;
+        }
+        ros::WallDuration(0.5).sleep();
+    }
+}
+
+void optimization::saveKeyFrameAndFactor(const gtsam::Pose3& pose,
+                                         double time,
+                                         const Eigen::Vector3d& velocity,
+                                         const PointCloudXYZRGB::Ptr& cloud)
 {
     std::lock_guard<std::mutex> lock(mutex);
-    
-    // Store pose
-    PointTypePose thisPose6D;
-    gtsam::Pose3 currentPose = trans2gtsamPose(transformTobeMapped);
-    initialEstimate.insert(cloudKeyPoses6D->size(), currentPose);
+    if (!accepting_keyframes_) {
+        return;
+    }
 
-    thisPose6D.x = currentPose.translation().x();
-    thisPose6D.y = currentPose.translation().y();
-    thisPose6D.z = currentPose.translation().z();
-    thisPose6D.intensity = cloudKeyPoses6D->size();
-    thisPose6D.roll  = currentPose.rotation().roll();
-    thisPose6D.pitch = currentPose.rotation().pitch();
-    thisPose6D.yaw   = currentPose.rotation().yaw();
-    thisPose6D.time = timeLaserInfoCur;
-    cloudKeyPoses6D->push_back(thisPose6D);
-    
-    // Storage point cloud
-    PointCloudXYZRGB::Ptr thisSurfKeyFrame(new PointCloudXYZRGB());
-    pcl::copyPointCloud(*laserCloudSurfLastDS, *thisSurfKeyFrame);
-    surfCloudKeyFrames.push_back(thisSurfKeyFrame);
-    
+    const size_t keyframe_index = keyFrames.size();
+    initialEstimate.insert(keyframe_index, pose);
+
+    KeyFrame keyframe;
+    keyframe.time = time;
+    keyframe.pose = pose;
+    keyframe.velocity = velocity;
+    keyframe.cloud.reset(new PointCloudXYZRGB());
+    if (cloud) {
+        pcl::copyPointCloud(*cloud, *keyframe.cloud);
+    }
+
+    keyFrames.push_back(keyframe);
+    last_keyframe_wall_time_ = ros::WallTime::now();
 }
 
 //DTW
@@ -146,6 +511,11 @@ double optimization::calculateDtwTimeOffset(
     const std::vector<std::vector<double>>& gpsdata,
     const std::vector<std::vector<double>>& slamdata)
 {
+    if (gpsdata.size() < 3 || slamdata.size() < 3) {
+        ROS_WARN("[initialAlign] not enough samples for DTW time offset.");
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+
     const double MIN_EFFECTIVE_VELOCITY = 0.5; // m/s
     const int IDX_TIME = 0;
     const int IDX_X = 1;
@@ -203,8 +573,13 @@ double optimization::calculateDtwTimeOffset(
     auto [gps_pos_times, gps_pos_norms] = process_data(gpsdata);
     auto [slam_pos_times, slam_pos_norms] = process_data(slamdata);
 
-    sample1 = &(slam_pos_norms[0]);
-    sample2 = &(gps_pos_norms[0]);
+    if (gps_pos_norms.empty() || slam_pos_norms.empty()) {
+        ROS_WARN("[initialAlign] no moving samples for DTW time offset.");
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+
+    sample1 = slam_pos_norms.data();
+    sample2 = gps_pos_norms.data();
 
     std::vector<std::pair<int, int>> dtw_path;
     DTW(slam_pos_norms, gps_pos_norms, dtw_path);
@@ -220,7 +595,7 @@ double optimization::calculateDtwTimeOffset(
     }
 
     if (valid_pairs == 0) {
-        return 0.0;
+        return std::numeric_limits<double>::quiet_NaN();
     }
 
     double avg_time_diff = total_time_diff / valid_pairs;
@@ -249,43 +624,225 @@ double optimization::calculateDtwTimeOffset(
     return avg_time_diff;
 }
 
+double optimization::estimateVelocityTimeOffset(
+    const std::vector<std::vector<double>>& gps_position_data,
+    const std::vector<std::vector<double>>& slam_position_data,
+    const std::vector<std::vector<double>>& gps_velocity_data,
+    const std::vector<std::vector<double>>& slam_velocity_data,
+    double coarse_time_offset,
+    double& best_score,
+    double& zero_score,
+    int& best_pair_count,
+    std::string& velocity_source)
+{
+    best_score = -std::numeric_limits<double>::infinity();
+    zero_score = -std::numeric_limits<double>::infinity();
+    best_pair_count = 0;
+    velocity_source = "none";
+
+    auto canNormalize = [](const VelocitySeries& slam, const VelocitySeries& gps) {
+        VelocitySeries slam_copy = slam;
+        VelocitySeries gps_copy = gps;
+        return normalizeVelocitySeries(slam_copy) && normalizeVelocitySeries(gps_copy);
+    };
+
+    VelocitySeries direct_slam_velocity = buildVelocitySeriesFromSamples(slam_velocity_data, 0.0);
+    VelocitySeries direct_gps_velocity = buildVelocitySeriesFromSamples(gps_velocity_data, coarse_time_offset);
+
+    VelocitySeries slam_velocity;
+    VelocitySeries gps_velocity;
+    if (canNormalize(direct_slam_velocity, direct_gps_velocity)) {
+        slam_velocity = direct_slam_velocity;
+        gps_velocity = direct_gps_velocity;
+        velocity_source = "direct_twist";
+    } else {
+        slam_velocity = buildVelocitySeries(slam_position_data, 0.0);
+        gps_velocity = buildVelocitySeries(gps_position_data, coarse_time_offset);
+        velocity_source = "position_difference";
+    }
+
+    std::ofstream slam_file(opt_vel_output_path_);
+    if (slam_file.is_open()) {
+        slam_file << std::fixed << std::setprecision(6);
+        for (size_t i = 0; i < slam_velocity.values.size(); ++i) {
+            slam_file << slam_velocity.times[i] << " " << slam_velocity.values[i] << std::endl;
+        }
+        slam_file.close();
+    }
+
+    std::ofstream gps_file(gps_vel_output_path_);
+    if (gps_file.is_open()) {
+        gps_file << std::fixed << std::setprecision(6);
+        for (size_t i = 0; i < gps_velocity.values.size(); ++i) {
+            gps_file << gps_velocity.times[i] << " " << gps_velocity.values[i] << std::endl;
+        }
+        gps_file.close();
+    }
+
+    if (!normalizeVelocitySeries(slam_velocity) || !normalizeVelocitySeries(gps_velocity)) {
+        ROS_WARN("[initialAlign] velocity time offset skipped: not enough speed variation.");
+        velocity_source = "unusable";
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+
+    constexpr double SEARCH_RANGE_SEC = 10.0;
+    constexpr double SEARCH_STEP_SEC = 0.05;
+
+    int zero_pair_count = 0;
+    zero_score = scoreVelocityOffset(slam_velocity, gps_velocity, 0.0, zero_pair_count);
+
+    std::ofstream score_file(debug_optdata_path_ + "time_alignment_score.csv");
+    if (score_file.is_open()) {
+        score_file << std::fixed << std::setprecision(9);
+        score_file << "fine_offset_sec,score,pairs\n";
+    }
+
+    double best_offset = 0.0;
+    for (int step = static_cast<int>(std::round(-SEARCH_RANGE_SEC / SEARCH_STEP_SEC));
+         step <= static_cast<int>(std::round(SEARCH_RANGE_SEC / SEARCH_STEP_SEC));
+         ++step) {
+        const double candidate_offset = static_cast<double>(step) * SEARCH_STEP_SEC;
+        int pair_count = 0;
+        const double score = scoreVelocityOffset(slam_velocity, gps_velocity, candidate_offset, pair_count);
+        if (score_file.is_open()) {
+            score_file << candidate_offset << ",";
+            if (std::isfinite(score)) {
+                score_file << score;
+            } else {
+                score_file << "nan";
+            }
+            score_file << "," << pair_count << "\n";
+        }
+        if (score > best_score) {
+            best_score = score;
+            best_offset = candidate_offset;
+            best_pair_count = pair_count;
+        }
+    }
+
+    if (!std::isfinite(best_score)) {
+        ROS_WARN("[initialAlign] velocity time offset skipped: no overlapping velocity samples.");
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+
+    return best_offset;
+}
+
 //Spacetime synchronization
 void optimization::initialAlign()
 {
-    //using DTW
-    // std::vector<std::vector<double>> slamdata;
-    // slamdata.reserve(cloudKeyPoses6D->size());
-    // for (const auto& p : cloudKeyPoses6D->points) {
-    //     slamdata.push_back({p.time, p.x, p.y, p.z});
-    // }
-    
-    // std::vector<std::vector<double>> gpsdata;
-    // gpsdata.reserve(gpsQueue.size());
-    // for (const auto& g : gpsQueue) {
-    //     gpsdata.push_back({
-    //         g.header.stamp.toSec(),
-    //         g.pose.pose.position.x,
-    //         g.pose.pose.position.y,
-    //         g.pose.pose.position.z
-    //     });
-    // }
-
-    // double avg_time_diff = calculateDtwTimeOffset(gpsdata, slamdata);
-    
-    // ros::Duration time_offset(avg_time_diff);
-
-    // for(auto& g : gpsQueue) {
-    //     g.header.stamp += time_offset;
-    // }
- 
-    // ROS_INFO("[initialAlign] 1. DTW calculated time offset: %.4f seconds.", avg_time_diff);
-
     //using spline
     std::cout << " [initialAlign] initial align (using Spline)... " << std::endl;
+    gpsQueue_B.clear();
 
-    if (cloudKeyPoses6D->empty() || gpsQueue.empty()) {
+    if (keyFrames.empty() || gpsQueue.empty()) {
         ROS_WARN("[initialAlign] empty buffers.");
         return;
+    }
+
+    std::vector<std::vector<double>> slam_position_data;
+    std::vector<std::vector<double>> slam_velocity_data;
+    slam_position_data.reserve(keyFrames.size());
+    slam_velocity_data.reserve(keyFrames.size());
+    for (const auto& keyframe : keyFrames) {
+        const auto& p = keyframe.pose.translation();
+        slam_position_data.push_back({keyframe.time, p.x(), p.y(), p.z()});
+        slam_velocity_data.push_back({
+            keyframe.time,
+            keyframe.velocity.x(),
+            keyframe.velocity.y(),
+            keyframe.velocity.z()});
+    }
+
+    std::vector<std::vector<double>> gps_position_data;
+    std::vector<std::vector<double>> gps_velocity_data;
+    gps_position_data.reserve(gpsQueue.size());
+    gps_velocity_data.reserve(gpsQueue.size());
+    for (const auto& g : gpsQueue) {
+        const auto& p = g.pose.pose.position;
+        const auto& v = g.twist.twist.linear;
+        gps_position_data.push_back({g.header.stamp.toSec(), p.x, p.y, p.z});
+        gps_velocity_data.push_back({g.header.stamp.toSec(), v.x, v.y, v.z});
+    }
+
+    const double slam_start = slam_position_data.front()[0];
+    const double slam_end = slam_position_data.back()[0];
+    const double gps_start = gps_position_data.front()[0];
+    const double gps_end = gps_position_data.back()[0];
+    const double raw_overlap = std::min(slam_end, gps_end) - std::max(slam_start, gps_start);
+    const bool epoch_mismatch = raw_overlap < 5.0
+                             || std::fabs(slam_start - gps_start) > 100.0
+                             || std::fabs(slam_end - gps_end) > 100.0;
+
+    const double coarse_time_offset = epoch_mismatch ? (slam_start - gps_start) : 0.0;
+    double best_velocity_score = -std::numeric_limits<double>::infinity();
+    double zero_velocity_score = -std::numeric_limits<double>::infinity();
+    int best_velocity_pairs = 0;
+    std::string velocity_source;
+    const double fine_time_offset = estimateVelocityTimeOffset(
+        gps_position_data, slam_position_data,
+        gps_velocity_data, slam_velocity_data,
+        coarse_time_offset, best_velocity_score, zero_velocity_score,
+        best_velocity_pairs, velocity_source);
+
+    double applied_time_offset = coarse_time_offset;
+    bool fine_time_offset_used = false;
+    if (std::isfinite(fine_time_offset) && std::fabs(fine_time_offset) <= 10.0 &&
+        std::isfinite(best_velocity_score) && best_velocity_score > 0.25) {
+        const bool score_improved = !std::isfinite(zero_velocity_score) ||
+                                  (best_velocity_score - zero_velocity_score) > 0.05;
+        if (epoch_mismatch || score_improved) {
+            applied_time_offset += fine_time_offset;
+            fine_time_offset_used = true;
+        }
+    }
+
+    if (std::fabs(applied_time_offset) > 1e-9) {
+        const ros::Duration time_offset(applied_time_offset);
+        for (auto& g : gpsQueue) {
+            g.header.stamp += time_offset;
+        }
+    }
+
+    writeVelocityAlignmentCsv(debug_optdata_path_ + "time_alignment_velocity.csv",
+                              gps_position_data, slam_position_data,
+                              gps_velocity_data, slam_velocity_data,
+                              velocity_source, coarse_time_offset,
+                              fine_time_offset_used ? fine_time_offset : 0.0);
+
+    ROS_INFO("[initialAlign] time offset raw_overlap: %.6f, coarse: %.6f, velocity_fine: %.6f, applied: %.6f, source: %s, score: %.3f, zero_score: %.3f, pairs: %d",
+             raw_overlap, coarse_time_offset, fine_time_offset, applied_time_offset,
+             velocity_source.c_str(), best_velocity_score, zero_velocity_score, best_velocity_pairs);
+
+    std::ofstream time_offset_file(debug_optdata_path_ + "time_offset.txt");
+    if (time_offset_file.is_open()) {
+        time_offset_file << std::fixed << std::setprecision(9);
+        time_offset_file << "slam_start " << slam_start << "\n";
+        time_offset_file << "slam_end " << slam_end << "\n";
+        time_offset_file << "gps_start_before " << gps_start << "\n";
+        time_offset_file << "gps_end_before " << gps_end << "\n";
+        time_offset_file << "raw_overlap_sec " << raw_overlap << "\n";
+        time_offset_file << "epoch_mismatch " << (epoch_mismatch ? 1 : 0) << "\n";
+        time_offset_file << "coarse_time_offset_sec " << coarse_time_offset << "\n";
+        time_offset_file << "velocity_fine_time_offset_sec " << fine_time_offset << "\n";
+        time_offset_file << "velocity_fine_used " << (fine_time_offset_used ? 1 : 0) << "\n";
+        time_offset_file << "velocity_source " << velocity_source << "\n";
+        time_offset_file << "velocity_best_score " << best_velocity_score << "\n";
+        time_offset_file << "velocity_zero_score " << zero_velocity_score << "\n";
+        time_offset_file << "velocity_best_pairs " << best_velocity_pairs << "\n";
+        time_offset_file << "applied_time_offset_sec " << applied_time_offset << "\n";
+        time_offset_file << "gps_start_after " << gpsQueue.front().header.stamp.toSec() << "\n";
+        time_offset_file << "gps_end_after " << gpsQueue.back().header.stamp.toSec() << "\n";
+        time_offset_file.close();
+    }
+
+    const std::string plot_script = std::string(ROOT_DIR) + "scripts/plot_time_alignment.py";
+    const std::string plot_command = "python3 " + shellQuote(plot_script) +
+                                     " --debug-dir " + shellQuote(debug_optdata_path_) +
+                                     " >/dev/null 2>&1";
+    const int plot_rc = std::system(plot_command.c_str());
+    if (plot_rc != 0) {
+        ROS_WARN("[initialAlign] failed to generate time alignment plot: %s", plot_script.c_str());
     }
     
     struct Sample { double t; Eigen::Vector3d p; };
@@ -423,9 +980,9 @@ void optimization::initialAlign()
     };
     
     //Aligning GPS queues and odometer spline
-    for (size_t i = 0; i < cloudKeyPoses6D->size(); ++i) 
+    for (size_t i = 0; i < keyFrames.size(); ++i)
     {
-        const double tk = cloudKeyPoses6D->points[i].time;
+        const double tk = keyFrames[i].time;
 
         nav_msgs::Odometry gps_odom_B;
         gps_odom_B.header.stamp = ros::Time().fromSec(tk);
@@ -446,13 +1003,13 @@ void optimization::initialAlign()
     std::vector<Eigen::Vector3d> A_slam_gps; 
     std::vector<Eigen::Vector3d> B_enu_gps;  
 
-    const double t_start = cloudKeyPoses6D->points[0].time;
+    const double t_start = keyFrames.front().time;
     const double t_end_svd = t_start + 50.0; 
 
-    for (size_t i = 0; i < cloudKeyPoses6D->size(); ++i) 
+    for (size_t i = 0; i < keyFrames.size(); ++i)
     {
-        const auto& slam_pose_imu = cloudKeyPoses6D->points[i];
-        const double tk = slam_pose_imu.time;
+        const auto& keyframe = keyFrames[i];
+        const double tk = keyframe.time;
         
         if (tk > t_end_svd) break; 
         if (tk < T.front() || tk > T.back()) continue; 
@@ -476,21 +1033,13 @@ void optimization::initialAlign()
 
     gtsam::Pose3 T_enu_slam = computeSVD(B_enu_gps, A_slam_gps);
 
-    for (size_t i = 0; i < cloudKeyPoses6D->size(); ++i) {
+    for (size_t i = 0; i < keyFrames.size(); ++i) {
         gtsam::Pose3 T_slam_imu = initialEstimate.at<gtsam::Pose3>(i);
         gtsam::Pose3 T_slam_gps = T_slam_imu.compose(T_imu_rtk);
         gtsam::Pose3 T_enu_gps = T_enu_slam.compose(T_slam_gps);
 
         initialEstimate.update(i, T_enu_gps);
-        
-        const auto& p = T_enu_gps.translation();
-        const auto& r = T_enu_gps.rotation().rpy();
-        cloudKeyPoses6D->points[i].x     = p.x();
-        cloudKeyPoses6D->points[i].y     = p.y();
-        cloudKeyPoses6D->points[i].z     = p.z();
-        cloudKeyPoses6D->points[i].roll  = r(0);
-        cloudKeyPoses6D->points[i].pitch = r(1);
-        cloudKeyPoses6D->points[i].yaw   = r(2);
+        keyFrames[i].pose = T_enu_gps;
     }
     
     ROS_INFO("[initialAlign] Spline-based alignment complete.");
@@ -555,17 +1104,19 @@ void optimization::syncedCallback(const nav_msgs::Odometry::ConstPtr& odomMsg, c
     double roll, pitch, yaw;
     tf::Matrix3x3(orientation).getRPY(roll, pitch, yaw);
 
-    transformTobeMapped[0] = roll;
-    transformTobeMapped[1] = pitch;
-    transformTobeMapped[2] = yaw;
-    transformTobeMapped[3] = odomMsg->pose.pose.position.x;
-    transformTobeMapped[4] = odomMsg->pose.pose.position.y;
-    transformTobeMapped[5] = odomMsg->pose.pose.position.z;
-    
-    laserCloudSurfLastDS->clear();
-    pcl::fromROSMsg(*cloudMsg, *laserCloudSurfLastDS);
+    gtsam::Pose3 pose(
+        gtsam::Rot3::RzRyRx(roll, pitch, yaw),
+        gtsam::Point3(odomMsg->pose.pose.position.x,
+                      odomMsg->pose.pose.position.y,
+                      odomMsg->pose.pose.position.z));
 
-    saveKeyFramesAndFactor();
+    const auto& velocity_msg = odomMsg->twist.twist.linear;
+    Eigen::Vector3d velocity(velocity_msg.x, velocity_msg.y, velocity_msg.z);
+
+    PointCloudXYZRGB::Ptr cloud(new PointCloudXYZRGB());
+    pcl::fromROSMsg(*cloudMsg, *cloud);
+
+    saveKeyFrameAndFactor(pose, timeLaserInfoCur, velocity, cloud);
 }
 
 void optimization::gpsHandler(const gnss_comm::GnssPVTSolnMsg::ConstPtr& gpsMsg)
@@ -616,11 +1167,11 @@ void optimization::gpsHandler(const gnss_comm::GnssPVTSolnMsg::ConstPtr& gpsMsg)
 
 void optimization::savekeyframescan()
 {
-    for (size_t i = 0; i < surfCloudKeyFrames.size(); ++i)
+    for (size_t i = 0; i < keyFrames.size(); ++i)
     {
         PointCloudXYZRGB::Ptr keyframe_cloud(new PointCloudXYZRGB());
-        *keyframe_cloud = *surfCloudKeyFrames[i];
-        Eigen::Affine3f transform = pclPointToAffine3f(cloudKeyPoses6D->points[i]);
+        *keyframe_cloud = *keyFrames[i].cloud;
+        Eigen::Affine3f transform = poseToAffine3f(keyFrames[i].pose);
         pcl::transformPointCloud(*keyframe_cloud, *keyframe_cloud, transform);
         std::string save_path = keyframe_scan_pcd_path_ + std::to_string(i) + ".pcd";
         pcl::io::savePCDFileBinary(save_path, *keyframe_cloud);
@@ -631,10 +1182,10 @@ void optimization::saveOptimizedGlobalMap()
 {
     PointCloudXYZRGB::Ptr globalMapCloud(new PointCloudXYZRGB());
 
-    for (size_t i = 0; i < cloudKeyPoses6D->size(); ++i)
+    for (size_t i = 0; i < keyFrames.size(); ++i)
     {
-        Eigen::Affine3f transform = pclPointToAffine3f(cloudKeyPoses6D->points[i]);
-        PointCloudXYZRGB::Ptr original_cloud = surfCloudKeyFrames[i];
+        Eigen::Affine3f transform = poseToAffine3f(keyFrames[i].pose);
+        PointCloudXYZRGB::Ptr original_cloud = keyFrames[i].cloud;
         PointCloudXYZRGB::Ptr transformed_cloud(new PointCloudXYZRGB());
         pcl::transformPointCloud(*original_cloud, *transformed_cloud, transform);
         *globalMapCloud += *transformed_cloud;
@@ -652,23 +1203,27 @@ void optimization::saveOptimizedGlobalMap()
     pcl::io::savePCDFileBinary(save_path, *globalMapCloud);
 }
 
-void optimization::writeOptimizedTumTrajectory() {
-    if (cloudKeyPoses6D->empty()) {
+void optimization::writeTumTrajectory(const std::string& path) {
+    if (keyFrames.empty()) {
         ROS_WARN("No optimized keyframes to write to TUM file.");
         return;
     }
 
-    std::string final_path = opt_tum_output_path_;
-    std::ofstream tum_file(final_path);
+    std::ofstream tum_file(path);
     tum_file << "# timestamp tx ty tz qx qy qz qw" << std::endl;
     tum_file << std::fixed << std::setprecision(6);
-    for (const auto& pose : cloudKeyPoses6D->points) {
-        tf::Quaternion q = tf::createQuaternionFromRPY(pose.roll, pose.pitch, pose.yaw);
-        tum_file << pose.time << " "
-                 << pose.x << " " << pose.y << " " << pose.z << " "
+    for (const auto& keyframe : keyFrames) {
+        const auto& t = keyframe.pose.translation();
+        const auto q = keyframe.pose.rotation().toQuaternion();
+        tum_file << keyframe.time << " "
+                 << t.x() << " " << t.y() << " " << t.z() << " "
                  << q.x() << " " << q.y() << " " << q.z() << " " << q.w() << std::endl;
     }
     tum_file.close();
+}
+
+void optimization::writeOptimizedTumTrajectory() {
+    writeTumTrajectory(opt_tum_output_path_);
 }
 
 void optimization::writeRtkTumTrajectory() {
@@ -677,7 +1232,7 @@ void optimization::writeRtkTumTrajectory() {
         return;
     }
     
-    std::ofstream tum_file(gps_tum_output_path_);
+    std::ofstream tum_file(rtk_tum_output_path_);
     tum_file << "# timestamp tx ty tz qx qy qz qw" << std::endl;
     tum_file << std::fixed << std::setprecision(6);
 
@@ -712,8 +1267,11 @@ void optimization::loadData(const std::string& data_dir)
             if (line.empty() || line[0] == '#') continue;
 
             std::stringstream ss(line);
-            double t, x, y, z, vx, vy, vz, h_acc, v_acc;
-            ss >> t >> x >> y >> z ;
+            double t, x, y, z;
+            double vx = 0.0, vy = 0.0, vz = 0.0;
+            double h_acc = 0.0, v_acc = 0.0;
+            ss >> t >> x >> y >> z;
+            ss >> vx >> vy >> vz >> h_acc >> v_acc;
             
             nav_msgs::Odometry gps_msg;
             gps_msg.header.stamp = ros::Time().fromSec(t) - ros::Duration(gps_offset);
@@ -723,6 +1281,12 @@ void optimization::loadData(const std::string& data_dir)
             gps_msg.pose.pose.position.y = y;
             gps_msg.pose.pose.position.z = z;
             gps_msg.pose.pose.orientation.w = 1.0;
+            gps_msg.twist.twist.linear.x = vx;
+            gps_msg.twist.twist.linear.y = vy;
+            gps_msg.twist.twist.linear.z = vz;
+            gps_msg.pose.covariance[0] = h_acc;
+            gps_msg.pose.covariance[7] = h_acc;
+            gps_msg.pose.covariance[14] = v_acc;
 
             gpsQueue.push_back(gps_msg);
             rtk_count++;
@@ -736,7 +1300,7 @@ void optimization::loadData(const std::string& data_dir)
     // Load KeyFrames (Odom + PCD) 
     std::string odom_path = data_dir + "/odom.txt";
     std::string cov_path  = data_dir + "/cov.txt";
-    std::string pcd_dir   = data_dir + "pcd/";
+    std::string pcd_dir   = data_dir + "/pcd/";
 
     std::ifstream odom_file(odom_path);
     std::ifstream cov_file(cov_path);
@@ -769,7 +1333,9 @@ void optimization::loadData(const std::string& data_dir)
 
         // Odom 
         double tx, ty, tz, qx, qy, qz, qw;
+        double vx = 0.0, vy = 0.0, vz = 0.0;
         ss_odom >> tx >> ty >> tz >> qx >> qy >> qz >> qw;
+        ss_odom >> vx >> vy >> vz;
 
         timeLaserInfoCur = t_odom;
         timeLaserInoStamp = ros::Time().fromSec(t_odom);
@@ -777,26 +1343,23 @@ void optimization::loadData(const std::string& data_dir)
         tf::Quaternion orientation(qx, qy, qz, qw);
         double roll, pitch, yaw;
         tf::Matrix3x3(orientation).getRPY(roll, pitch, yaw);
-        
-        transformTobeMapped[0] = roll;
-        transformTobeMapped[1] = pitch;
-        transformTobeMapped[2] = yaw;
-        transformTobeMapped[3] = tx;
-        transformTobeMapped[4] = ty;
-        transformTobeMapped[5] = tz;
+        gtsam::Pose3 pose(
+            gtsam::Rot3::RzRyRx(roll, pitch, yaw),
+            gtsam::Point3(tx, ty, tz));
+        Eigen::Vector3d velocity(vx, vy, vz);
 
         // PCD
         std::stringstream ss_filename;
         ss_filename << std::setw(6) << std::setfill('0') << processed_count;
         std::string pcd_path = pcd_dir + ss_filename.str() + ".pcd";
 
-        laserCloudSurfLastDS->clear();
-        if (pcl::io::loadPCDFile(pcd_path, *laserCloudSurfLastDS) == -1) {
+        PointCloudXYZRGB::Ptr cloud(new PointCloudXYZRGB());
+        if (pcl::io::loadPCDFile(pcd_path, *cloud) == -1) {
             ROS_ERROR("Missing PCD file for timestamp %.6f: %s", t_odom, pcd_path.c_str());
             continue; 
         }
 
-        saveKeyFramesAndFactor();
+        saveKeyFrameAndFactor(pose, timeLaserInfoCur, velocity, cloud);
         processed_count++;
     }
     

@@ -25,38 +25,29 @@
 #include <gnss_comm/GnssPVTSolnMsg.h>
 
 #include <GeographicLib/LocalCartesian.hpp> 
+#include <Eigen/StdVector>
+#include <atomic>
 #include <memory>
 #include "LIVMapper.h"
 #include "FastDTW/example.hpp"
 
-struct PointXYZIRPYT
+struct KeyFrame
 {
-    PCL_ADD_POINT4D;                  
-    PCL_ADD_INTENSITY;
-    float roll;
-    float pitch;
-    float yaw;
-    double time;
-    EIGEN_MAKE_ALIGNED_OPERATOR_NEW   
-} EIGEN_ALIGN16;      
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
-POINT_CLOUD_REGISTER_POINT_STRUCT (PointXYZIRPYT,
-                                   (float, x, x) (float, y, y)
-                                   (float, z, z) (float, intensity, intensity)
-                                   (float, roll, roll) (float, pitch, pitch) (float, yaw, yaw)
-                                   (double, time, time))
+    double time = 0.0;
+    gtsam::Pose3 pose = gtsam::Pose3::Identity();
+    Eigen::Vector3d velocity = Eigen::Vector3d::Zero();
+    PointCloudXYZRGB::Ptr cloud;
+};
 
-typedef PointXYZIRPYT PointTypePose;
+using KeyFrameVector = std::vector<KeyFrame, Eigen::aligned_allocator<KeyFrame>>;
 
-inline gtsam::Pose3 trans2gtsamPose(float transformIn[])
-{
-    return gtsam::Pose3(gtsam::Rot3::RzRyRx(transformIn[0], transformIn[1], transformIn[2]), 
-                        gtsam::Point3(transformIn[3], transformIn[4], transformIn[5]));
-}
-
-inline Eigen::Affine3f pclPointToAffine3f(PointTypePose thisPoint)
+inline Eigen::Affine3f poseToAffine3f(const gtsam::Pose3& pose)
 { 
-    return pcl::getTransformation(thisPoint.x, thisPoint.y, thisPoint.z, thisPoint.roll, thisPoint.pitch, thisPoint.yaw);
+    const auto& t = pose.translation();
+    const auto rpy = pose.rotation().rpy();
+    return pcl::getTransformation(t.x(), t.y(), t.z(), rpy.x(), rpy.y(), rpy.z());
 }
 
 inline gtsam::Pose3 computeSVD(const std::vector<Eigen::Vector3d>& target, 
@@ -99,14 +90,28 @@ public:
     void offlineOptimizationTask();
     void initialAlign();
     double calculateDtwTimeOffset(const std::vector<std::vector<double>>& gpsdata, const std::vector<std::vector<double>>& slamdata);
+    double estimateVelocityTimeOffset(const std::vector<std::vector<double>>& gps_position_data,
+                                      const std::vector<std::vector<double>>& slam_position_data,
+                                      const std::vector<std::vector<double>>& gps_velocity_data,
+                                      const std::vector<std::vector<double>>& slam_velocity_data,
+                                      double coarse_time_offset,
+                                      double& best_score,
+                                      double& zero_score,
+                                      int& best_pair_count,
+                                      std::string& velocity_source);
     void buildBatchGraph();
-    void saveKeyFramesAndFactor();
+    void waitForKeyFrameIdle(double idle_seconds);
+    void saveKeyFrameAndFactor(const gtsam::Pose3& pose,
+                               double time,
+                               const Eigen::Vector3d& velocity,
+                               const PointCloudXYZRGB::Ptr& cloud);
     void syncedCallback(const nav_msgs::Odometry::ConstPtr& odomMsg, const sensor_msgs::PointCloud2::ConstPtr& cloudMsg);
     void gpsHandler(const gnss_comm::GnssPVTSolnMsg::ConstPtr& pvtMsg);
     // void gpsHandler(const sensor_msgs::NavSatFixConstPtr& gpsMsg);
 
     void saveOptimizedGlobalMap();
     void savekeyframescan();
+    void writeTumTrajectory(const std::string& path);
     void writeOptimizedTumTrajectory();
     void writeRtkTumTrajectory();
     
@@ -139,13 +144,10 @@ public:
     gtsam::Pose3 T_imu_rtk;
 
 
-    PointCloudXYZRGB::Ptr laserCloudSurfLastDS;
-    vector<PointCloudXYZRGB::Ptr> surfCloudKeyFrames;
-    
-    pcl::PointCloud<PointTypePose>::Ptr cloudKeyPoses6D;
-    pcl::PointCloud<PointTypePose>::Ptr copy_cloudKeyPoses6D;
+    KeyFrameVector keyFrames;
 
     std::thread optimization_thread_;
+    std::atomic_bool optimization_shutdown_requested_{false};
 
     std::deque<nav_msgs::Odometry> gpsQueue;
     std::deque<nav_msgs::Odometry> gpsQueue_B;
@@ -155,7 +157,6 @@ public:
     double timeLaserInfoCur;
     ros::Time timeLaserInoStamp;
 
-    float transformTobeMapped[6];
     vector<double> gps_extrinT;
 
     double gps_offset;
@@ -170,12 +171,15 @@ public:
     bool save_pcd_enable_ = false;
     bool is_optimized = false;
     bool gps_en;
+    bool accepting_keyframes_ = true;
+    ros::WallTime last_keyframe_wall_time_;
 
     string gps_topic;
     string outputfilepath;
     string debug_optdata_path_;
     string opt_tum_output_path_;
-    string gps_tum_output_path_;
+    string livo_tum_before_output_path_;
+    string rtk_tum_output_path_;
     string opt_vel_output_path_;
     string gps_vel_output_path_;
     string global_map_pcd_path_;

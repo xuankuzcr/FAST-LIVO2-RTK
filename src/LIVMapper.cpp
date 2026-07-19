@@ -1590,6 +1590,9 @@ void LIVMapper::publish_frame_world(const ros::Publisher &pubLaserCloudFullRes, 
   odom_msg_ekf.pose.pose.orientation.x = q.x();
   odom_msg_ekf.pose.pose.orientation.y = q.y();
   odom_msg_ekf.pose.pose.orientation.z = q.z();
+  odom_msg_ekf.twist.twist.linear.x = _state.vel_end(0);
+  odom_msg_ekf.twist.twist.linear.y = _state.vel_end(1);
+  odom_msg_ekf.twist.twist.linear.z = _state.vel_end(2);
   Eigen::Map<Eigen::Matrix<double, 6, 6, Eigen::RowMajor>> pose_cov_map(odom_msg_ekf.pose.covariance.data());
 
   pose_cov_map.block<3, 3>(0, 0) = _state.cov.block<3, 3>(3, 3);
@@ -1607,10 +1610,13 @@ void LIVMapper::publish_frame_world(const ros::Publisher &pubLaserCloudFullRes, 
                   << _state.pos_end(0) << " "
                   << _state.pos_end(1) << " "
                   << _state.pos_end(2) << " "
-                  << q.x() << " "
-                  << q.y() << " "
-                  << q.z() << " "
-                  << q.w() << std::endl;
+	                  << q.x() << " "
+	                  << q.y() << " "
+	                  << q.z() << " "
+	                  << q.w() << " "
+	                  << _state.vel_end(0) << " "
+	                  << _state.vel_end(1) << " "
+	                  << _state.vel_end(2) << std::endl;
         odom_file.close();
     }
 
